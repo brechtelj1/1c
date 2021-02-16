@@ -15,11 +15,17 @@
 #define FREE 0
 #define BUSY 1
 
+typedef struct LockQ {
+    int         pid;
+    LockQ       *next;
+} LockQ;
+
 typedef struct Lock {
     int         inuse;
     char        name[P1_MAXNAME];
     int         state; // BUSY or FREE
-    int         pid; 
+    int         pid; // process id that currently holds lock
+    LockQ       ElQueue; // queue for processes waiting on lock
     // more fields here
 } Lock;
 
@@ -41,6 +47,7 @@ int P1_LockCreate(char *name, int *lid){
     int result = P1_SUCCESS;
     int i = 0;
     int lockId = -1;
+    Lock currentLock;
     CHECKKERNEL();
     // disable interrupts
     P1DisableInterrupts();
@@ -48,14 +55,14 @@ int P1_LockCreate(char *name, int *lid){
     // check parameters
     for(i = 0; i < P1_MAXLOCKS;i++){
         if(strcmp(name,locks[i].name)){
-            result = P1_DUPLICATE_NAME;
+            return P1_DUPLICATE_NAME;
         }
     }
     if(NULL == name){
-        result = P1_NAME_IS_NULL;
+        return P1_NAME_IS_NULL;
     }
     if(strlen(name) > P1_MAXNAME){
-        result = P1_NAME_TOO_LONG;
+        return P1_NAME_TOO_LONG;
     }
     // check if all locks in use
     for(i = 0;i < P1_MAXLOCKS;i++){
@@ -65,28 +72,69 @@ int P1_LockCreate(char *name, int *lid){
             break;
         }
     }
-
+    if(lockId == -1){
+        return P1_TOO_MANY_LOCKS;
+    }
     // find an unused Lock and initialize it
+    currentLock = locks[lockId];
 
+    strcpy(currntLock->name, name);
+    currentLock.pid = P1_GetPid();
+    currentLock.state = FREE;
+    currentLock.inuse = 1;
+    currentLock.ElQueue = malloc(sizeof(LockQ));
+    currentLock.ElQueue->next = NULL;
+    currentLock.ElQueue.pid = -1;
+    lid = lockId;
     
     // restore interrupts
+    P1EnableInterrupts();
     return result;
 }
 
 int P1_LockFree(int lid) {
     int     result = P1_SUCCESS;
+    Lock currentLock;
     CHECKKERNEL();
     // disable interrupts
+    P1DisableInterrupts();
+
     // check if any processes are waiting on lock
+    if(NULL == locks[lid].ElQueue->next){
+        return P1_BLOCKED_PROCESSES; 
+    }
+
+    if(lid < 0 || lid >= P1_MAXLOCKS){
+        return P1_INVALID_LOCK;
+    }
+
     // mark lock as unused and clean up any state
+    currentLock = locks[lid];
+    strcpy(currentLock->name, "");
+    currentLock.pid = -1;
+    currentLock.state = FREE;
+    currentLock.inuse = 0;
+    free(currentLock.ElQueue);
+
     // restore interrupts
+    P1EnableInterrupts();
     return result;
 }
 
 
 int P1_Lock(int lid) {
     int result = P1_SUCCESS;
+    LockQ curr;
+    LockQ temp;
+    Lock currentLock;
+
     CHECKKERNEL();
+
+    if(lid < 0 || lid >= P1_MAXLOCKS){
+        return P1_INVALID_LOCK;
+    }
+
+    currentLock = locks[lid];
     /*********************
 
     Pseudo-code from the lecture notes.
@@ -104,14 +152,48 @@ int P1_Lock(int lid) {
     RestoreInterrupts();
 
     *********************/
+    while(1){
+        P1DisableInterrupts();
+        if(currentLock.state == FREE){
+            currentLock.state = BUSY;
+            break;
+        }
+        // gets current process id and sets to state blocked
+        // vid is passed in as -1
+        P1SetState(P1GetPid(), P1_STATE_BLOCKED, lid, -1);
+        
+        // adds new process to head of locks queue
+        curr = malloc(sizeof(LockQ));
+        curr.pid = P1GetPid();
+        curr->next = currentLock.ElQueue->next;
+        currentLock.ElQueue->next = curr;
+        // enable interrupts and dispatches
+        P1EnableInterrupts();
+        P1Dispatch(FALSE);
+    }
 
+    currentLock.pid = P1GetPid();
+
+    P1EnableInterrupts();
     return result;
 }
 
 
 int P1_Unlock(int lid) {
     int result = P1_SUCCESS;
+    LockQ curr;
+    LockQ prev;
+    Lock currentLock;
+
     CHECKKERNEL();
+
+    if(lid < 0 || lid >= P1_MAXLOCKS){
+        return P1_INVALID_LOCK;
+    }
+    currentLock = locks[lid];
+    if(currentLock.pid != P1GetPid()){
+        return P1_LOCK_NOT_HELD;
+    }
     /*********************
 
       DisableInterrupts();
@@ -123,13 +205,50 @@ int P1_Unlock(int lid) {
       RestoreInterrupts();
 
     *********************/
+    P1DisableInterrupts();
+    currentLock.state = FREE;
+    // if lock queue is not empty
+    if(NULL != currentLock.ElQueue->next){
+        curr = currentLock.ElQueue->next;
+        prev = currentLock.ElQueue;
+        // get to the tail of the queue
+        while(NULL != curr->next){
+            prev = curr;
+            curr = curr->next;
+        }
+        // remove tail node
+        prev->next = NULL;
+        // set current process id to ready
+        P1SetState(curr.pid, P1_STATE_READY, lid, -1);
+        // free previous tail node
+        free(next);
+        P1Dispatch(FALSE);
+    }
+    currentLock.pid = -1;
+    P1EnableInterrupts();
     return result;
 }
 
 int P1_LockName(int lid, char *name, int len) {
     int result = P1_SUCCESS;
+    Lock currentLock;
+    int i;
+
     CHECKKERNEL();
-    // more code here
+    if(lid < 0 || lid >= P1_MAXLOCKS){
+        return P1_INVALID_LOCK;
+    }
+    currentLock = locks[lid];
+    if(NULL == currentLock->name){
+        return P1_NAME_IS_NULL;
+    }
+
+    for(i = 0; i < len; i++){
+        name[i] = currentLock->name[i];
+        if(currentLock->name[i] == '\0'){
+            break;
+        }
+    }
     return result;
 }
 

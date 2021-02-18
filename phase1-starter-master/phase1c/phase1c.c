@@ -262,7 +262,7 @@ int P1_LockName(int lid, char *name, int len) {
 typedef struct Condition{
     int         inuse;
     char        name[P1_MAXNAME];
-    int         lock;  // lock associated with this variable
+    int         lid;  // lock associated with this variable
     int         numWaiting;
     // more fields here
 } Condition;
@@ -286,16 +286,20 @@ int P1_CondCreate(char *name, int lid, int *vid) {
     P1DisableInterrupts();
     // error checks
     if(NULL == name){
+        P1EnableInterrupts();
         return P1_NAME_IS_NULL;
     }
     if(strlen(name) > P1_MAXNAME){
+        P1EnableInterrupts();
         return P1_NAME_TOO_LONG;
     }
     if(lid >= P1_MAXLOCKS || locks[lid].inuse == 0){
+        P1EnableInterrupts();
         return P1_INVALID_LOCK;
     }
     for(i = 0; i < P1_MAXCONDS; i++){
         if(strcmp(name, conditions[i]->name)){
+            P1EnableInterrupts();
             return P1_DUPLICATE_NAME;
         }
     }
@@ -331,11 +335,13 @@ int P1_CondFree(int vid) {
 
     // error checks
     if(conditions[vid].inuse){
+        P1EnableInterrupts();
         return P1_INVALID_COND;
     }
     currentCond = conditions[vid];
     currentLock = locks[currentCond.lid]
     if(NULL != currentLock.LockQ->next){
+        P1EnableInterrupts();
         return P1_BLOCKED_PROCESSES;
     }
 
@@ -354,18 +360,22 @@ int P1_Wait(int vid) {
     int result = P1_SUCCESS;
     int checker;
     Condition currentCond;
+    LockQ newNode;
     CHECKKERNEL();
 
     P1DisableInterrupts();
 
     if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
         return P1_INVALID_COND;
+        P1EnableInterrupts();
     }
     currentCond = conditions[vid];
     if(locks[currentCond.lid].inuse == FALSE){
+        P1EnableInterrupts();
         return P1_INVALID_LOCK;
     }
-    if(P1GetPid() != locks[current.lid].pid){
+    if(P1GetPid() != locks[currentCond.lid].pid){
+        P1EnableInterrupts();
         return P1_LOCK_NOT_HELD;
     }
     /*********************
@@ -384,15 +394,40 @@ int P1_Wait(int vid) {
     checker = P1_Unlock(currentCond.lid);
     // do error checks
 
-    P1SetState(P1GetPid(), P1_STATE_BLOCKED, currentCond.lid, currentCond);
-    // TODO: finish function
+    P1SetState(P1GetPid(), P1_STATE_BLOCKED, currentCond.lock, vid);
+    
+    // adds process to queue
+    newNode = malloc(sizeof(LockQ));
+    newNode.pid = P1GetPid();
+    newNode->next = locks[currendCond.lid].ElQueue->next;
+    locks[currendCond.lid].ElQueue->next = newNode;
+
+    P1Dispatch(FALSE);
+    P1_Lock(currentCond.lid);
     P1EnableInterrupts();
     return result;
 }
 
 int P1_Signal(int vid) {
     int result = P1_SUCCESS;
+    Condition currentCond;
+    LockQ curr;
+    LockQ prev;
         CHECKKERNEL();
+        P1DisableInterrupts();
+    if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
+        return P1_INVALID_COND;
+        P1EnableInterrupts();
+    }
+    currentCond = conditions[vid];
+    if(locks[currentCond.lid].inuse == FALSE){
+        return P1_INVALID_LOCK;
+        P1EnableInterrupts();
+    }
+    if(P1GetPid() != locks[current.lid].pid){
+        return P1_LOCK_NOT_HELD;
+        P1EnableInterrupts();
+    }
     /*********************
 
       DisableInterrupts();
@@ -403,13 +438,44 @@ int P1_Signal(int vid) {
         Dispatcher();
       }
       RestoreInterrupts();
-    *********************/    
+    *********************/ 
+    if(currentCond.numWaiting > 0){
+        curr = locks[currentCond.lid].ElQueue->next;
+        prev = locks[currentCond.lid].ElQueue;
+        while(NULL != curr->next){
+            prev = curr;
+            curr = curr->next;
+        }
+        prev->next = NULL;
+        P1SetState(curr.pid, P1_STATE_READY, currentCond.lid, vid);
+        currentCond.numWaiting--;
+        P1Dispatch();
+    }
+    P1EnableInterrupts();
     return result;
 }
 
 int P1_Broadcast(int vid) {
     int result = P1_SUCCESS;
+    Condition currentCond;
+    LockQ curr;
+    LockQ head;
     CHECKKERNEL();
+    P1DisableInterrupts();
+
+    if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
+        P1EnableInterrupts();
+        return P1_INVALID_COND;
+    }
+    currentCond = conditions[vid];
+    if(locks[currentCond.lid].inuse == FALSE){
+        P1EnableInterrupts();
+        return P1_INVALID_LOCK;
+    }
+    if(P1GetPid() != locks[current.lid].pid){
+        P1EnableInterrupts();
+        return P1_LOCK_NOT_HELD;
+    }
     /*********************
       DisableInterrupts();
       Confirm lock is held 
@@ -419,20 +485,68 @@ int P1_Broadcast(int vid) {
         Dispatcher();
       }
       RestoreInterrupts();
-    *********************/    
+    *********************/
+    while(currentCond.numWaiting > 0){
+        head = locks[currentCond.lid].ElQueue;
+        curr = head->next;
+        P1SetState(curr.pid, P1_STATE_READY, currendCond.lid, vid);
+        head->next = curr->next;
+        free(curr);
+        currendCond.numWaiting--;
+        P1Dispatch(FALSE);
+    }
+    P1EnableInterrupts();
     return result;
 }
 
 int P1_NakedSignal(int vid) {
     int result = P1_SUCCESS;
+    Condition currentCond;
+    LockQ curr;
+    LockQ prev;
     CHECKKERNEL();
+
+    if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
+        return P1_INVALID_COND;
+        P1EnableInterrupts();
+    }
     // more code here
+    currentCond = conditions[vid];
+    if(currentCond.numWaiting > 0){
+        prev = locks[currentCond.lid].ElQueue;
+        curr = prev->next;
+        while(NULL != curr->next){
+            prev = curr;
+            curr = curr->next;
+        }
+        currentCond.numWaiting--;
+        prev->next = NULL;
+        P1SetState(curr.pid, P1_STATE_READY, currentCond.lid, vid);
+        free(curr);
+        P1Dispatch(FALSE);
+    }
     return result;
 }
 
 int P1_CondName(int vid, char *name, int len) {
     int result = P1_SUCCESS;
+    Condition currentCond;
+    int i;
+
     CHECKKERNEL();
-    // more code here
+    if(vid < 0 || vid >= P1_MAXCONDS){
+        return P1_INVALID_COND;
+    }
+    currentCond = conditions[vid];
+    if(NULL == currentCond->name){
+        return P1_NAME_IS_NULL;
+    }
+
+    for(i = 0; i < len; i++){
+        name[i] = currentCond->name[i];
+        if(currentCond->name[i] == '\0'){
+            break;
+        }
+    }
     return result;
 }

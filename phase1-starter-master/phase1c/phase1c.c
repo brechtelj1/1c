@@ -296,6 +296,7 @@ typedef struct Condition{
     char        name[P1_MAXNAME];
     int         lid;  // lock associated with this variable
     int         numWaiting;
+    LockQ       CondQueue;
     // more fields here
 } Condition;
 
@@ -316,7 +317,9 @@ int P1_CondCreate(char *name, int lid, int *vid) {
     int result = P1_SUCCESS;
     int i;
     int condId = -1;
+    LockQ *CondQueue; 
     CHECKKERNEL();
+    
     // more code here
     int interruptVal = P1DisableInterrupts();
     if(interruptVal);
@@ -359,10 +362,15 @@ int P1_CondCreate(char *name, int lid, int *vid) {
     conditions[condId].inuse = 1;
     strcpy(conditions[condId].name, name);
     conditions[condId].numWaiting = 0;
+    CondQueue = malloc(sizeof(LockQ));
+    conditions[condId].CondQueue = *CondQueue;
+    conditions[condId].CondQueue.next = NULL;
+    conditions[condId].CondQueue.pid = -1;
 
     P1EnableInterrupts();
     return result;
 }
+
 
 int P1_CondFree(int vid) {
     int result = P1_SUCCESS;
@@ -379,7 +387,7 @@ int P1_CondFree(int vid) {
     }
     currentCond = &conditions[vid];
     currentLock = &locks[currentCond->lid];
-    if(NULL != currentLock->ElQueue.next){
+    if(NULL != currentCond->CondQueue.next){
         P1EnableInterrupts();
         return P1_BLOCKED_PROCESSES;
     }
@@ -440,17 +448,24 @@ int P1_Wait(int vid) {
     currentCond->numWaiting++;
     checker = P1_Unlock(currentCond->lid);
     // do error checks
+    //locks[currentCond->lid].state = FREE;
 
     stateVal = P1SetState(P1_GetPid(), P1_STATE_BLOCKED, currentCond->lid, vid);
     if(stateVal);
+
     // adds process to queue
     newNode = malloc(sizeof(LockQ));
     newNode->pid = P1_GetPid();
-    newNode->next = locks[currentCond->lid].ElQueue.next;
-    locks[currentCond->lid].ElQueue.next = newNode;
+
+    // wedge new node between empty head node and next node
+    newNode->next = currentCond->CondQueue.next;
+    currentCond->CondQueue.next = newNode;
+    printf("newNode->pid = %d, next = %d\n",newNode->pid,currentCond->CondQueue.next->pid);
 
     P1Dispatch(FALSE);
     lockVal = P1_Lock(currentCond->lid);
+    //locks[currentCond->lid].state = BUSY;
+    //locks[currentCond->lid].pid = P1_GetPid();
     if(lockVal);
     P1EnableInterrupts();
     return result;
@@ -460,10 +475,13 @@ int P1_Signal(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
     LockQ *curr;
-    LockQ prev;
+    LockQ *prev;
     int stateVal;
     int interruptVal;
     CHECKKERNEL();
+
+    //int i;
+
     interruptVal = P1DisableInterrupts();
     if(interruptVal);
     if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
@@ -490,19 +508,31 @@ int P1_Signal(int vid) {
         Dispatcher();
       }
       RestoreInterrupts();
-    *********************/  
+    *********************/
+    curr = &currentCond->CondQueue;  
+    while(NULL != curr->next){
+            printf("elQueue = %d\n",curr->pid);
+            curr = curr->next;
+    }
+    printf("currLid = %d\n",currentCond->lid);
     if(currentCond->numWaiting > 0){
-        curr = locks[currentCond->lid].ElQueue.next;
-        prev = locks[currentCond->lid].ElQueue;
+        printf("num waiting = %d\n",currentCond->numWaiting);
+        curr = currentCond->CondQueue.next;
+        printf("curr = %d\n",curr->pid);
+        prev = &currentCond->CondQueue;
+        //printf("prev = %d\n",prev->pid);
         while(NULL != curr->next){
-            prev = *curr;
+            //printf("in while\n");
+            prev = curr;
             curr = curr->next;
         }
-        prev.next = NULL;
+        //printf("after while\n");
+        prev->next = NULL;
         stateVal = P1SetState(curr->pid, P1_STATE_READY, currentCond->lid, vid);
         if(stateVal);
         currentCond->numWaiting--;
         P1Dispatch(FALSE);
+        //printf("dispatching\n");
     }
     P1EnableInterrupts();
     return result;
@@ -543,7 +573,7 @@ int P1_Broadcast(int vid) {
       RestoreInterrupts();
     *********************/
     while(currentCond->numWaiting > 0){
-        head = &locks[currentCond->lid].ElQueue;
+        head = &currentCond->CondQueue;
         curr = head->next; 
         stateVal = P1SetState(curr->pid, P1_STATE_READY, currentCond->lid, vid);
         if(stateVal);
@@ -571,7 +601,7 @@ int P1_NakedSignal(int vid) {
     // more code here
     currentCond = &conditions[vid];
     if(currentCond->numWaiting > 0){
-        prev = locks[currentCond->lid].ElQueue;
+        prev = currentCond->CondQueue;
         curr = prev.next;
         while(NULL != curr->next){
             prev = *curr;

@@ -58,16 +58,16 @@ int P1_LockCreate(char *name, int *lid){
     // disable interrupts
     interruptVal = P1DisableInterrupts();
 
+    if(NULL == name){
+        //printf("name null\n");
+        return P1_NAME_IS_NULL;
+    }
     // check parameters
     for(i = 0; i < P1_MAXLOCKS;i++){
         if(strcmp(name,locks[i].name) == 0){
             //printf("duplicate name\n");
             return P1_DUPLICATE_NAME;
         }
-    }
-    if(NULL == name){
-        //printf("name null\n");
-        return P1_NAME_IS_NULL;
     }
     if(strlen(name) > P1_MAXNAME){
         return P1_NAME_TOO_LONG;
@@ -86,7 +86,7 @@ int P1_LockCreate(char *name, int *lid){
 
     //printf("no return errors LOCK\n");
     // find an unused Lock and initialize it
-    printf("CREATE_LOCK: lockid = %d\n",lockId);
+    //printf("CREATE_LOCK: lockid = %d\n",lockId);
     currentLock = &locks[lockId];
     elQueue = malloc(sizeof(LockQ));
 
@@ -120,7 +120,7 @@ int P1_LockFree(int lid) {
     }
 
     if(lid < 0 || lid >= P1_MAXLOCKS){
-        printf("invalid lock\n");
+        //printf("invalid lock\n");
         return P1_INVALID_LOCK;
     }
 
@@ -151,9 +151,8 @@ int P1_Lock(int lid) {
     Lock *currentLock;
 
     CHECKKERNEL();
-
-    if(lid < 0 || lid >= P1_MAXLOCKS){
-        printf("invalid lock P1_Lock\n");
+    if(lid < 0 || lid >= P1_MAXLOCKS || locks[lid].inuse == 0){
+        //printf("invalid lock P1_Lock\n");
         return P1_INVALID_LOCK;
     }
     // for(i = 0;i < 20;i++){
@@ -177,11 +176,11 @@ int P1_Lock(int lid) {
     RestoreInterrupts();
 
     *********************/
-    printf("prior lock state = %d\n",currentLock->state);
+    //printf("prior lock state = %d\n",currentLock->state);
     while(1){
         interruptVal = P1DisableInterrupts();
         if(currentLock->state == FREE){
-            printf("lock status now busy\n");
+            //printf("lock status now busy\n");
             currentLock->state = BUSY;
             break;
         }
@@ -218,8 +217,8 @@ int P1_Unlock(int lid) {
 
     CHECKKERNEL();
 
-    if(lid < 0 || lid >= P1_MAXLOCKS){
-        printf("invalid lock P1_unlock\n");
+    if(lid < 0 || lid >= P1_MAXLOCKS || locks[lid].inuse == 0){
+        //printf("invalid lock P1_unlock\n");
         return P1_INVALID_LOCK;
     }
     currentLock = &locks[lid];
@@ -269,12 +268,13 @@ int P1_LockName(int lid, char *name, int len) {
     int i;
 
     CHECKKERNEL();
-    if(lid < 0 || lid >= P1_MAXLOCKS){
-        printf("invalid p1_lockname\n");
+    if(lid < 0 || lid >= P1_MAXLOCKS || locks[lid].inuse == 0){
+        //printf("invalid p1_lockname\n");
         return P1_INVALID_LOCK;
     }
     currentLock = &locks[lid];
-    if(NULL == currentLock->name){
+    
+    if(NULL == name){
         return P1_NAME_IS_NULL;
     }
 
@@ -304,7 +304,7 @@ static Condition conditions[P1_MAXCONDS];
 void P1CondInit(void) {
     CHECKKERNEL();
     P1LockInit();
-    printf("MAXCOND = %d\n",P1_MAXCONDS);
+    //printf("MAXCOND = %d\n",P1_MAXCONDS);
     for (int i = 0; i < P1_MAXCONDS; i++) {
         conditions[i].inuse = FALSE;
     }
@@ -403,27 +403,6 @@ int P1_Wait(int vid) {
     CHECKKERNEL();
     int stateVal;
     int lockVal;
-    int interruptVal = P1DisableInterrupts();
-    if(interruptVal);
-
-    if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
-        return P1_INVALID_COND;
-        P1EnableInterrupts();
-    }
-    currentCond = &conditions[vid];
-
-    // lock id bad   (CHANGED FROM FALSE TO TRUE (this lock right?))
-    if(currentCond->lid > P1_MAXLOCKS){
-        P1EnableInterrupts();
-        printf("invalid lock P1_wait\n");
-        return P1_INVALID_LOCK;
-    }
-    printf("lock state = %d\n",locks[currentCond->lid].state);
-    printf("FREE = %d, BUSY = %d\n",FREE,BUSY);
-    if(locks[currentCond->lid].state == FREE){
-        P1EnableInterrupts();
-        return P1_LOCK_NOT_HELD;
-    }
     /*********************
 
       DisableInterrupts();
@@ -436,6 +415,28 @@ int P1_Wait(int vid) {
       RestoreInterrupts();
 
     *********************/
+    int interruptVal = P1DisableInterrupts();
+    if(interruptVal);
+
+    if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
+        P1EnableInterrupts();
+        return P1_INVALID_COND;
+    }
+    currentCond = &conditions[vid];
+
+    // lock id bad   (CHANGED FROM FALSE TO TRUE (this lock right?))
+    if(currentCond->lid > P1_MAXLOCKS){
+        P1EnableInterrupts();
+        //printf("invalid lock P1_wait\n");
+        return P1_INVALID_LOCK;
+    }
+    //printf("lock state = %d\n",locks[currentCond->lid].state);
+    //printf("FREE = %d, BUSY = %d\n",FREE,BUSY);
+    if(locks[currentCond->lid].state == FREE){
+        P1EnableInterrupts();
+        return P1_LOCK_NOT_HELD;
+    }
+
     currentCond->numWaiting++;
     checker = P1_Unlock(currentCond->lid);
     // do error checks
@@ -466,18 +467,18 @@ int P1_Signal(int vid) {
     interruptVal = P1DisableInterrupts();
     if(interruptVal);
     if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
-        return P1_INVALID_COND;
         P1EnableInterrupts();
+        return P1_INVALID_COND;
     }
     currentCond = &conditions[vid];
     if(locks[currentCond->lid].inuse == FALSE){
-        printf("invalid lock P1_signal\n");
-        return P1_INVALID_LOCK;
+        //printf("invalid lock P1_signal\n");
         P1EnableInterrupts();
+        return P1_INVALID_LOCK;
     }
     if(P1_GetPid() != locks[currentCond->lid].pid){
-        return P1_LOCK_NOT_HELD;
         P1EnableInterrupts();
+        return P1_LOCK_NOT_HELD;
     }
     /*********************
 
@@ -489,7 +490,7 @@ int P1_Signal(int vid) {
         Dispatcher();
       }
       RestoreInterrupts();
-    *********************/ 
+    *********************/  
     if(currentCond->numWaiting > 0){
         curr = locks[currentCond->lid].ElQueue.next;
         prev = locks[currentCond->lid].ElQueue;
@@ -510,8 +511,8 @@ int P1_Signal(int vid) {
 int P1_Broadcast(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
-    LockQ curr;
-    LockQ head;
+    LockQ *curr;
+    LockQ *head;
     int stateVal;
     int interruptVal;
     CHECKKERNEL();
@@ -524,7 +525,7 @@ int P1_Broadcast(int vid) {
     currentCond = &conditions[vid];
     if(locks[currentCond->lid].inuse == FALSE){
         P1EnableInterrupts();
-        printf("invalid lock P1_broadcast\n");
+        //printf("invalid lock P1_broadcast\n");
         return P1_INVALID_LOCK;
     }
     if(P1_GetPid() != locks[currentCond->lid].pid){
@@ -542,13 +543,12 @@ int P1_Broadcast(int vid) {
       RestoreInterrupts();
     *********************/
     while(currentCond->numWaiting > 0){
-        head = locks[currentCond->lid].ElQueue;
-        curr = *head.next; 
-        stateVal = P1SetState(curr.pid, P1_STATE_READY, currentCond->lid, vid);
+        head = &locks[currentCond->lid].ElQueue;
+        curr = head->next; 
+        stateVal = P1SetState(curr->pid, P1_STATE_READY, currentCond->lid, vid);
         if(stateVal);
-        head.next = curr.next;
-        free((int*) curr.pid);
-        free(curr.next);
+        head->next = curr->next;
+        free(curr);
         currentCond->numWaiting--;
         P1Dispatch(FALSE);
     }

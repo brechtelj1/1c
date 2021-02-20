@@ -1,4 +1,4 @@
-// James Brechtel and Zach
+// James Brechtel and Zachery Braaten-Schuettpelz
 
 #include <stdio.h>
 #include <stddef.h>
@@ -101,6 +101,9 @@ int P1_LockCreate(char *name, int *lid){
     return result;
 }
 
+// Checks to see if the lock trying to be freed has processes blocked
+// If there are no blocked processes then set all fields of the struct
+// to their original values
 int P1_LockFree(int lid) {
     int     result = P1_SUCCESS;
     Lock *currentLock;
@@ -130,7 +133,9 @@ int P1_LockFree(int lid) {
     return result;
 }
 
-
+// Gives the current process the lock specified if no other process is holding
+// the current lock. If another process is holding the specified lock add that
+// process to a queue of processes that are waiting to acquire the lock
 int P1_Lock(int lid) {
     int interruptVal;
     int stateVal;
@@ -173,7 +178,9 @@ int P1_Lock(int lid) {
     return result;
 }
 
-
+// Releases the currently held lock by the process. If There is a process
+// in the queue waiting for the lock, set that process's state to ready
+// If there is no other processes in the queue then set the current pid to -1
 int P1_Unlock(int lid) {
     int result = P1_SUCCESS;
     LockQ *curr;
@@ -218,6 +225,8 @@ int P1_Unlock(int lid) {
     return result;
 }
 
+// This function copies len characters from the specified lock
+// into name
 int P1_LockName(int lid, char *name, int len) {
     int result = P1_SUCCESS;
     Lock *currentLock;
@@ -325,7 +334,9 @@ int P1_CondCreate(char *name, int lid, int *vid) {
     return result;
 }
 
-
+// This function frees the condition variable.
+// This throws an error if there are conditions waiting for the lock
+// otherwhise resets the fields of the condition variable
 int P1_CondFree(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -356,7 +367,9 @@ int P1_CondFree(int vid) {
     return result;
 }
 
-// wait for lock to open up
+// Waits on the condition variable. The current process must hold
+// the lock and will be released while waiting. While the process is
+// waiting its state is set to blocked
 int P1_Wait(int vid) {
     int result = P1_SUCCESS;
     int checker;
@@ -407,6 +420,9 @@ int P1_Wait(int vid) {
     return result;
 }
 
+// This function signals a process that is waiting on the condition
+// variable. If there are no process waiting on the condition variable,
+// P1_Signal does nothing.
 int P1_Signal(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -453,6 +469,9 @@ int P1_Signal(int vid) {
     return result;
 }
 
+// This function signals all process that are waiting on the
+// condition variable. If there are no process waiting on the
+// condition variable, this function does nothing.
 int P1_Broadcast(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -490,6 +509,9 @@ int P1_Broadcast(int vid) {
     return result;
 }
 
+// This function is a lot like signal, however the lock associated
+// with the condition variable does not need to be held by the calling
+// process. If there are no processes waiting, do nothing
 int P1_NakedSignal(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -521,6 +543,8 @@ int P1_NakedSignal(int vid) {
     return result;
 }
 
+// This function copies len characters from the specified lock
+// into name
 int P1_CondName(int vid, char *name, int len) {
     int result = P1_SUCCESS;
     Condition *currentCond;

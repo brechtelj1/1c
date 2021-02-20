@@ -1,4 +1,4 @@
-// James Brechtel and Zach
+// James Brechtel and Zachery Braaten-Schuettpelz
 
 #include <stdio.h>
 #include <stddef.h>
@@ -59,13 +59,11 @@ int P1_LockCreate(char *name, int *lid){
     interruptVal = P1DisableInterrupts();
 
     if(NULL == name){
-        //printf("name null\n");
         return P1_NAME_IS_NULL;
     }
     // check parameters
     for(i = 0; i < P1_MAXLOCKS;i++){
         if(strcmp(name,locks[i].name) == 0){
-            //printf("duplicate name\n");
             return P1_DUPLICATE_NAME;
         }
     }
@@ -84,9 +82,8 @@ int P1_LockCreate(char *name, int *lid){
         return P1_TOO_MANY_LOCKS;
     }
 
-    //printf("no return errors LOCK\n");
+
     // find an unused Lock and initialize it
-    //printf("CREATE_LOCK: lockid = %d\n",lockId);
     currentLock = &locks[lockId];
     elQueue = malloc(sizeof(LockQ));
 
@@ -99,14 +96,15 @@ int P1_LockCreate(char *name, int *lid){
     currentLock->ElQueue.pid = -1;
     currentLock->vid = -1;
     *lid = lockId;
-
-    //printf("lid = %d\n",*lid);
     
     // restore interrupts
     P1EnableInterrupts();
     return result;
 }
 
+// Checks to see if the lock trying to be freed has processes blocked
+// If there are no blocked processes then set all fields of the struct
+// to their original values
 int P1_LockFree(int lid) {
     int     result = P1_SUCCESS;
     Lock *currentLock;
@@ -120,7 +118,6 @@ int P1_LockFree(int lid) {
     }
 
     if(lid < 0 || lid >= P1_MAXLOCKS){
-        //printf("invalid lock\n");
         return P1_INVALID_LOCK;
     }
 
@@ -131,56 +128,31 @@ int P1_LockFree(int lid) {
     currentLock->state = FREE;
     currentLock->inuse = 0;
     currentLock->vid = -1;
-    
-    //free((int*) currentLock->ElQueue.pid);
-    //free(currentLock->ElQueue.next);
 
     // restore interrupts
     P1EnableInterrupts();
     return result;
 }
 
-
+// Gives the current process the lock specified if no other process is holding
+// the current lock. If another process is holding the specified lock add that
+// process to a queue of processes that are waiting to acquire the lock
 int P1_Lock(int lid) {
     int interruptVal;
     int stateVal;
     int result = P1_SUCCESS;
-    //int i = 0;
     LockQ *curr;
-    //LockQ temp;
     Lock *currentLock;
 
     CHECKKERNEL();
     if(lid < 0 || lid >= P1_MAXLOCKS || locks[lid].inuse == 0){
-        //printf("invalid lock P1_Lock\n");
         return P1_INVALID_LOCK;
     }
-    // for(i = 0;i < 20;i++){
-    //     printf("lock %d inuse = %d state = %d\n",i,locks[i].inuse,locks[i].state);
-    // }
     currentLock = &locks[lid];
-    /*********************
 
-    Pseudo-code from the lecture notes.
-
-    while(1) {
-          DisableInterrupts();
-          if (lock->state == FREE) {
-              lock->state = BUSY;
-              break;
-          }
-          Mark process BLOCKED, add to lock->q
-          RestoreInterrupts();
-          Dispatcher();
-    }
-    RestoreInterrupts();
-
-    *********************/
-    //printf("prior lock state = %d\n",currentLock->state);
     while(1){
         interruptVal = P1DisableInterrupts();
         if(currentLock->state == FREE){
-            //printf("lock status now busy\n");
             currentLock->state = BUSY;
             break;
         }
@@ -197,8 +169,7 @@ int P1_Lock(int lid) {
         P1EnableInterrupts();
         P1Dispatch(FALSE);
     }
-    //printf("lock %d has been locked\n",currentLock->pid);
-    //printf("lock state = %d\n",currentLock->state);
+
     currentLock->inuse = 1;
     currentLock->pid = P1_GetPid();
 
@@ -206,7 +177,9 @@ int P1_Lock(int lid) {
     return result;
 }
 
-
+// Releases the currently held lock by the process. If There is a process
+// in the queue waiting for the lock, set that process's state to ready
+// If there is no other processes in the queue then set the current pid to -1
 int P1_Unlock(int lid) {
     int result = P1_SUCCESS;
     LockQ *curr;
@@ -218,24 +191,13 @@ int P1_Unlock(int lid) {
     CHECKKERNEL();
 
     if(lid < 0 || lid >= P1_MAXLOCKS || locks[lid].inuse == 0){
-        //printf("invalid lock P1_unlock\n");
         return P1_INVALID_LOCK;
     }
     currentLock = &locks[lid];
     if(currentLock->pid != P1_GetPid()){
         return P1_LOCK_NOT_HELD;
     }
-    /*********************
 
-      DisableInterrupts();
-      lock->state = FREE;
-      if (lock->q is not empty) {
-          Remove process from lock->q, mark READY
-          Dispatcher();
-      }
-      RestoreInterrupts();
-
-    *********************/
     interruptVal = P1DisableInterrupts();
     if(interruptVal);
 
@@ -253,8 +215,6 @@ int P1_Unlock(int lid) {
         prev->next = NULL;
         // set current process id to ready
         stateVal = P1SetState(curr->pid, P1_STATE_READY, lid, currentLock->vid);
-        // free previous tail node
-        //free(prev);
         P1Dispatch(FALSE);
     }
     currentLock->pid = -1;
@@ -262,6 +222,8 @@ int P1_Unlock(int lid) {
     return result;
 }
 
+// This function copies len characters from the specified lock
+// into name
 int P1_LockName(int lid, char *name, int len) {
     int result = P1_SUCCESS;
     Lock *currentLock;
@@ -269,7 +231,6 @@ int P1_LockName(int lid, char *name, int len) {
 
     CHECKKERNEL();
     if(lid < 0 || lid >= P1_MAXLOCKS || locks[lid].inuse == 0){
-        //printf("invalid p1_lockname\n");
         return P1_INVALID_LOCK;
     }
     currentLock = &locks[lid];
@@ -304,8 +265,6 @@ static Condition conditions[P1_MAXCONDS];
 
 void P1CondInit(void) {
     CHECKKERNEL();
-    P1LockInit();
-    //printf("MAXCOND = %d\n",P1_MAXCONDS);
     for (int i = 0; i < P1_MAXCONDS; i++) {
         conditions[i].inuse = FALSE;
     }
@@ -335,7 +294,6 @@ int P1_CondCreate(char *name, int lid, int *vid) {
     // NOTE original -> locks[lid].inuse == 0
     if(lid >= P1_MAXLOCKS || lid < 0){
         P1EnableInterrupts();
-        //printf("invalid lock P1cond create\n");
         return P1_INVALID_LOCK;
     }
 
@@ -371,7 +329,9 @@ int P1_CondCreate(char *name, int lid, int *vid) {
     return result;
 }
 
-
+// This function frees the condition variable.
+// This throws an error if there are conditions waiting for the lock
+// otherwhise resets the fields of the condition variable
 int P1_CondFree(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -391,7 +351,6 @@ int P1_CondFree(int vid) {
         P1EnableInterrupts();
         return P1_BLOCKED_PROCESSES;
     }
-
     // reset condition feilds and locks condition variable
     strcpy(currentCond->name, "");
     currentCond->inuse = FALSE;
@@ -402,7 +361,9 @@ int P1_CondFree(int vid) {
     return result;
 }
 
-// wait for lock to open up
+// Waits on the condition variable. The current process must hold
+// the lock and will be released while waiting. While the process is
+// waiting its state is set to blocked
 int P1_Wait(int vid) {
     int result = P1_SUCCESS;
     int checker;
@@ -411,18 +372,6 @@ int P1_Wait(int vid) {
     CHECKKERNEL();
     int stateVal;
     int lockVal;
-    /*********************
-
-      DisableInterrupts();
-      Confirm lock is held
-      cv->waiting++;
-      Release(cv->lock);
-      Make process BLOCKED, add to cv->q
-      Dispatcher();
-      Acquire(cv->lock);
-      RestoreInterrupts();
-
-    *********************/
     int interruptVal = P1DisableInterrupts();
     if(interruptVal);
 
@@ -432,14 +381,10 @@ int P1_Wait(int vid) {
     }
     currentCond = &conditions[vid];
 
-    // lock id bad   (CHANGED FROM FALSE TO TRUE (this lock right?))
     if(currentCond->lid > P1_MAXLOCKS){
         P1EnableInterrupts();
-        //printf("invalid lock P1_wait\n");
         return P1_INVALID_LOCK;
     }
-    //printf("lock state = %d\n",locks[currentCond->lid].state);
-    //printf("FREE = %d, BUSY = %d\n",FREE,BUSY);
     if(locks[currentCond->lid].state == FREE){
         P1EnableInterrupts();
         return P1_LOCK_NOT_HELD;
@@ -447,8 +392,6 @@ int P1_Wait(int vid) {
 
     currentCond->numWaiting++;
     checker = P1_Unlock(currentCond->lid);
-    // do error checks
-    //locks[currentCond->lid].state = FREE;
 
     stateVal = P1SetState(P1_GetPid(), P1_STATE_BLOCKED, currentCond->lid, vid);
     if(stateVal);
@@ -464,13 +407,14 @@ int P1_Wait(int vid) {
 
     P1Dispatch(FALSE);
     lockVal = P1_Lock(currentCond->lid);
-    //locks[currentCond->lid].state = BUSY;
-    //locks[currentCond->lid].pid = P1_GetPid();
     if(lockVal);
     P1EnableInterrupts();
     return result;
 }
 
+// This function signals a process that is waiting on the condition
+// variable. If there are no process waiting on the condition variable,
+// P1_Signal does nothing.
 int P1_Signal(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -480,8 +424,6 @@ int P1_Signal(int vid) {
     int interruptVal;
     CHECKKERNEL();
 
-    //int i;
-
     interruptVal = P1DisableInterrupts();
     if(interruptVal);
     if(vid > P1_MAXCONDS || conditions[vid].inuse == FALSE){
@@ -490,7 +432,6 @@ int P1_Signal(int vid) {
     }
     currentCond = &conditions[vid];
     if(locks[currentCond->lid].inuse == FALSE){
-        //printf("invalid lock P1_signal\n");
         P1EnableInterrupts();
         return P1_INVALID_LOCK;
     }
@@ -498,17 +439,6 @@ int P1_Signal(int vid) {
         P1EnableInterrupts();
         return P1_LOCK_NOT_HELD;
     }
-    /*********************
-
-      DisableInterrupts();
-      Confirm lock is held 
-      if (cv->waiting > 0) {
-        Remove process from cv->q, make READY
-        cv->waiting--;
-        Dispatcher();
-      }
-      RestoreInterrupts();
-    *********************/
     curr = &currentCond->CondQueue;  
     while(NULL != curr->next){
             printf("elQueue = %d\n",curr->pid);
@@ -520,24 +450,23 @@ int P1_Signal(int vid) {
         curr = currentCond->CondQueue.next;
         printf("curr = %d\n",curr->pid);
         prev = &currentCond->CondQueue;
-        //printf("prev = %d\n",prev->pid);
         while(NULL != curr->next){
-            //printf("in while\n");
             prev = curr;
             curr = curr->next;
         }
-        //printf("after while\n");
         prev->next = NULL;
         stateVal = P1SetState(curr->pid, P1_STATE_READY, currentCond->lid, vid);
         if(stateVal);
         currentCond->numWaiting--;
         P1Dispatch(FALSE);
-        //printf("dispatching\n");
     }
     P1EnableInterrupts();
     return result;
 }
 
+// This function signals all process that are waiting on the
+// condition variable. If there are no process waiting on the
+// condition variable, this function does nothing.
 int P1_Broadcast(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -555,23 +484,12 @@ int P1_Broadcast(int vid) {
     currentCond = &conditions[vid];
     if(locks[currentCond->lid].inuse == FALSE){
         P1EnableInterrupts();
-        //printf("invalid lock P1_broadcast\n");
         return P1_INVALID_LOCK;
     }
     if(P1_GetPid() != locks[currentCond->lid].pid){
         P1EnableInterrupts();
         return P1_LOCK_NOT_HELD;
     }
-    /*********************
-      DisableInterrupts();
-      Confirm lock is held 
-      while (cv->waiting > 0) {
-        Remove process from cv->q, make READY
-        cv->waiting--;
-        Dispatcher();
-      }
-      RestoreInterrupts();
-    *********************/
     while(currentCond->numWaiting > 0){
         head = &currentCond->CondQueue;
         curr = head->next; 
@@ -585,7 +503,9 @@ int P1_Broadcast(int vid) {
     P1EnableInterrupts();
     return result;
 }
-
+// This function is a lot like signal, however the lock associated
+// with the condition variable does not need to be held by the calling
+// process. If there are no processes waiting, do nothing
 int P1_NakedSignal(int vid) {
     int result = P1_SUCCESS;
     Condition *currentCond;
@@ -598,7 +518,6 @@ int P1_NakedSignal(int vid) {
         P1EnableInterrupts();
         return P1_INVALID_COND;
     }
-    // more code here
     currentCond = &conditions[vid];
     if(currentCond->numWaiting > 0){
         prev = currentCond->CondQueue;
@@ -616,7 +535,8 @@ int P1_NakedSignal(int vid) {
     }
     return result;
 }
-
+// This function copies len characters from the specified lock
+// into name
 int P1_CondName(int vid, char *name, int len) {
     int result = P1_SUCCESS;
     Condition *currentCond;
